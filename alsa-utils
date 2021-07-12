@@ -1,0 +1,643 @@
+
+_alsautils_complete_cards() {
+	local id name
+	declare -a ids names
+	while read -r; do
+		id="${REPLY:0:2}"
+		id="${id// /}"
+		[[ -n "$id" ]] || continue
+		name="${REPLY:4:15}"
+		name="${name// /}"
+		[[ -n "$name" ]] || continue
+		names+=( "${name// }" )
+		ids+=( "$id" )
+	done <<< $(cat /proc/asound/cards)
+	COMPREPLY=( $(compgen -W "${ids[@]} ${names[@]}" -- $cur) )
+}
+
+_alsautils_complete_pcms() {
+	local IFS=$'\n'
+	local lcur="${cur//\\/\\\\}"
+	local pcms
+	while read -r; do
+		[[ "$REPLY" == " "* ]] && continue
+		[[ "$REPLY" == "$lcur"* ]] || continue
+		pcms="$pcms$IFS${REPLY// /\\ }"
+	done <<< $(aplay -L 2>/dev/null)
+	COMPREPLY=( $(compgen -W "$pcms" -- $lcur) )
+	# ALSA pcm names can contain '=' and ':', both of which cause
+	# problems for bash completion if it considers them to be word
+	# terminators. So we adjust the list of candidate matches to allow
+	# for this.
+	if [[ "$cur" == *=* && "$COMP_WORDBREAKS" == *=* ]]; then
+		# Remove equal-word prefix from COMPREPLY items
+		local equal_prefix=${cur%"${cur##*=}"}
+		local i=${#COMPREPLY[*]}
+		while [[ $((--i)) -ge 0 ]]; do
+			COMPREPLY[$i]=${COMPREPLY[$i]#"$equal_prefix"}
+		done
+	fi
+	__ltrim_colon_completions "$cur"
+}
+
+# helper function - find target card and/or device.
+_amixer_get_target() {
+	target=""
+	local i
+	for (( i=1; i <= COMP_CWORD; i++ )); do
+		case "${COMP_WORDS[i]}" in
+			-c|--card)
+				if (( i == COMP_CWORD )) ; then
+					break
+				elif (( i == COMP_CWORD - 1 )) ; then
+					[[ "${COMP_WORDS[i+1]}" = = ]] && break
+					target="$target -c ${COMP_WORDS[i+1]}"
+					break
+				else
+					[[ "${COMP_WORDS[i+1]}" = = ]] && (( i++ ))
+					if [[ "${COMP_WORDS[i+1]}" ]] ; then
+						(( i++ ))
+						target="$target -c ${COMP_WORDS[i]}"
+						continue
+					fi
+				fi
+				;;
+			-D|--device)
+				if (( i == COMP_CWORD )) ; then
+					break
+				elif (( i == COMP_CWORD - 1 )) ; then
+					[[ "${COMP_WORDS[i+1]}" = = ]] && break
+					target="$target -D ${COMP_WORDS[i+1]}"
+					break
+				else
+					[[ "${COMP_WORDS[i+1]}" = = ]] && (( i++ ))
+					if [[ "${COMP_WORDS[i+1]}" ]] ; then
+						(( i++ ))
+						target="$target -D ${COMP_WORDS[i]}"
+						continue
+					fi
+				fi
+				;;
+			-*|=)
+				continue
+				;;
+		esac
+
+		[[ "$commands" == *"${COMP_WORDS[i]} "* ]] && break
+
+	done
+}
+
+_amixer_complete_scontrols() {
+	local scontrols
+	local IFS=$'\n'
+	local temp=( $(eval $1 $target scontrols 2>/dev/null) )
+	(( $? == 0 )) || return
+	local i
+	for i in "${!temp[@]}" ; do
+		temp[i]="${temp[i]#Simple mixer control }"
+		temp[i]="${temp[i]// /\\ }"
+		scontrols="${scontrols}$IFS${temp[i]}"
+	done
+	COMPREPLY=( $(compgen -W "$scontrols" -- "${cur//\\/\\\\}") )
+}
+
+_amixer_complete_controls() {
+	local controls
+	local IFS=$'\n'
+
+	local temp=( $(eval $1 $target controls 2>/dev/null ) )
+	(( $? == 0 )) || return
+
+	local i
+	if [[ -z "$cur" ]] ; then
+		controls="iface=${IFS}numid="
+	elif [[ "$cur" = n* ]] ; then
+		for i in "${!temp[@]}" ; do
+			controls="$controls$IFS${temp[i]%%,*}"
+		done
+	elif [[ "$cur" = i* ]] ; then
+		for i in "${!temp[@]}" ; do
+			temp[i]="${temp[i]// /\\ }"
+			controls="$controls$IFS${temp[i]#*,}"
+		done
+	fi
+
+	COMPREPLY=( $(compgen -W "$controls" -- "${cur//\\/\\\\}") )
+	# ALSA control names can contain '=' and ':', both of which cause
+	# problems for bash completion if it considers them to be word
+	# terminators. So we adjust the list of candidate matches to allow
+	# for this.
+	if [[ "$cur" == *=* && "$COMP_WORDBREAKS" == *=* ]]; then
+		# Remove equal-word prefix from COMPREPLY items
+		local equal_prefix=${cur%"${cur##*=}"}
+		local i=${#COMPREPLY[*]}
+		while [[ $((--i)) -ge 0 ]]; do
+			COMPREPLY[$i]=${COMPREPLY[$i]#"$equal_prefix"}
+		done
+	fi
+}
+
+_axfer_get_backend() {
+	backend="libasound"
+	local i
+	for (( i=3; i <= COMP_CWORD; i++ )); do
+		[[ "--xfer-type" == "${COMP_WORDS[i]}"* ]] || continue
+		(( i++ <= COMP_CWORD )) || break
+		[[ "${COMP_WORDS[i]}" == = ]] && (( i++ <= COMP_CWORD )) || break
+		backend="${COMP_WORDS[i]}"
+	done
+}
+
+_axfer_get_pcms() {
+	(( COMP_CWORD > 2 )) || return
+	local direction="${COMP_WORDS[2]}"
+	eval local cur="$2"
+	cur="${cur/%\\/\\\\}"
+	while read -r; do
+		[[ "$REPLY" == " "* ]] && continue
+		[[ "$REPLY" == "$cur"* ]] || continue
+		printf "%s\n" "${REPLY// /\\ }"
+	done <<< $("$1" list "$direction" pcm 2>/dev/null)
+}
+
+# completion function for alsaloop
+_alsaloop() {
+	local cur prev words cword split
+
+	_init_completion -s -n : || return
+
+	case "$prev" in
+		-g|--config)
+			return
+			;;
+		-P|--pdevice)
+			_have aplay || return
+			_alsautils_complete_pcms
+			return
+			;;
+		-C|--cdevice)
+			_have aplay || return
+			_alsautils_complete_pcms
+			return
+			;;
+		-X|--pctl)
+			_have alsa-list-ctls || return
+			COMPREPLY=( $(compgen -W "default $(alsa-list-ctls)" -- $cur) )
+			return
+			;;
+		-Y|--cctl)
+			_have alsa-list-ctls || return
+			COMPREPLY=( $(compgen -W "default $(alsa-list-ctls)" -- $cur) )
+			return
+			;;
+		-l|--latency)
+			return
+			;;
+		-t|--tlatency)
+			return
+			;;
+		-f|--format)
+			local formats
+			while read -r ; do
+				[[ "$REPLY" = "Recognized sample formats"* ]] || continue
+				formats="${REPLY#Recognized sample formats are: }"
+			done <<< $("$1" --help 2>/dev/null)
+			if [[ "$cur" && ${cur:0:1} =~ [[:upper:]] ]] ; then
+				COMPREPLY=( $(compgen -W "$formats" -- ${cur^^}) )
+			else
+				COMPREPLY=( $(compgen -W "${formats,,}" -- ${cur,,}) )
+			fi
+			return
+			;;
+		-c|--channels)
+			return
+			;;
+		-r|--rate)
+			return
+			;;
+		-A,--samplerate)
+			COMPREPLY=( $(compgen -W "0 1 2 3 4" -- $cur) )
+			return
+			;;
+		-B|--buffer)
+			return
+			;;
+		-E|--period)
+			return
+			;;
+		-s|--seconds)
+			return
+			;;
+		-S|--sync)
+			COMPREPLY=( $(compgen -W "0 1 2 3 4 5" -- $cur) )
+			return
+			;;
+		-a|--slave)
+			COMPREPLY=( $(compgen -W "0 1 2" -- $cur) )
+			return
+			;;
+		-T|--thread)
+			return
+			;;
+		-m|--mixer)
+			return
+			;;
+		-O|--ossmixer)
+			return
+			;;
+		-e|--effect)
+			COMPREPLY=( $(compgen -W "bandpass filter sweep" -- $cur) )
+			return
+			;;
+		-W|--wake)
+			return
+			;;
+		--*)
+			[[ ${COMP_WORDS[COMP_CWORD]} = = ]] && return
+			;;
+	esac
+
+	local options="--buffer= --cctl= --cdevice= --channels= --daemonize --effect= --format= --help --latency= --mixer= --nblock --ossmixer= --pctl= --pdevice= --period= --rate= --resample --samplerate --seconds= --slave= --sync= --syslog --thread --tlatency= --verbose --wake --workaround --xrun"
+	COMPREPLY=( $(compgen -W "$options" -- $cur) )
+	[[ $COMPREPLY == *= ]] && compopt -o nospace
+}
+
+# completion function for amidi
+_amidi() {
+	local cur prev words cword split
+
+	_init_completion -s -n : || return
+
+	case "$prev" in
+		-p|--port)
+			return
+			;;
+		-s|--send)
+			return
+			;;
+		-r|--receive)
+			return
+			;;
+		-S|--send-hex)
+			return
+			;;
+		-t|--timeout)
+			return
+			;;
+		-i|--sysex-interval)
+			return
+			;;
+		--*)
+			[[ ${COMP_WORDS[COMP_CWORD]} = = ]] && return
+			;;
+	esac
+
+	local options="$(_parse_help $1)"
+	options="${options//$'\n'-f/}"
+	COMPREPLY=( $(compgen -W "$options" -- $cur) )
+	[[ $COMPREPLY == *= ]] && compopt -o nospace
+}
+
+# completion function for amixer
+_amixer() {
+	local cur prev words cword split
+	local target
+	local commands="scontrols scontents sset sget controls contents cset cget "
+	local i
+
+	_init_completion -s -n : || return
+
+	# do not attempt completion on words containing ' or "
+	[[ "$cur" =~ [\'\"] ]] && return
+
+	local commandword=0
+	for (( i=1; i < COMP_CWORD; i++ )); do
+		case ${COMP_WORDS[i]} in
+			-*|=)
+				continue
+				;;
+		esac
+		[[ "${COMP_WORDS[i-1]}" == = ]] && (( i < COMP_CWORD )) && continue
+		[[ "$commands" == *"${COMP_WORDS[i]} "* ]] || continue
+		commandword=$i
+		break
+	done
+
+	case "$prev" in
+		-c|--card)
+			(( commandword == 0 )) || return
+			_alsautils_complete_cards
+			return
+			;;
+		-D|--device)
+			(( commandword == 0 )) || return
+			_have alsa-list-ctls || return
+			COMPREPLY=( $(compgen -W "default $(alsa-list-ctls)" -- $cur) )
+			return
+			;;
+		-a|--abstract)
+			(( commandword == 0 )) || return
+			COMPREPLY=( $(compgen -W "basic none" -- $cur) )
+			return
+			;;
+		--*)
+			(( commandword == 0 )) || return
+			[[ ${COMP_WORDS[COMP_CWORD]} = = ]] && return
+			;;
+		scontrols)
+			return
+			;;
+		scontents)
+			return
+			;;
+		sget|sset)
+			_amixer_get_target
+			_amixer_complete_scontrols "$1"
+			return
+			;;
+		controls)
+			return
+			;;
+		contents)
+			return
+			;;
+		cget|cset)
+			_amixer_get_target
+			_amixer_complete_controls "$1"
+			return
+			;;
+	esac
+
+	(( commandword == 0 )) || return
+
+	if [[ "$cur" = -* ]] ; then
+		local options="--abstract= --card= --device= --debug --help --inactive --mapped-volume --nocheck --quiet --raw-volume --stdin --version"
+		COMPREPLY=( $(compgen -W "$options" -- $cur) )
+		[[ $COMPREPLY == *= ]] && compopt -o nospace
+	else
+		COMPREPLY=( $(compgen -W "$commands" -- $cur) )
+	fi
+}
+
+# completion function for alsamixer
+_alsamixer() {
+	local cur prev words cword split
+
+	_init_completion -s -n : || return
+
+	case "$prev" in
+		-c|--card)
+			_alsautils_complete_cards
+			return
+			;;
+		-D|--device)
+			_have alsa-list-ctls || return
+			COMPREPLY=( $(compgen -W "default $(alsa-list-ctls)" -- $cur) )
+			return
+			;;
+		-V|--view)
+			COMPREPLY=( $(compgen -W "all capture playback" -- $cur) )
+			return				
+			;;
+		-a|--abstraction)
+			COMPREPLY=( $(compgen -W "basic none" -- $cur) )
+			return				
+			;;
+		--*)
+			[[ ${COMP_WORDS[COMP_CWORD]} = = ]] && return
+			;;
+	esac
+
+	local options="$(_parse_help $1)"
+	options="${options//$'\n'-f/}"
+	COMPREPLY=( $(compgen -W "$options" -- $cur) )
+	[[ $COMPREPLY == *= ]] && compopt -o nospace
+}
+
+# completion function for aplay and arecord
+_aplay() {
+	local TYPES="au raw voc wav"
+
+	local cur prev words cword split
+
+	_init_completion -s -n : || return
+
+	# do not attempt completion on words containing ' or "
+	[[ "$cur" =~ [\'\"] ]] && return
+
+	case "$prev" in
+		--device|-D)
+			_alsautils_complete_pcms
+			return
+			;;
+		--file-type|-t)
+			if [[ "$cur" && ${cur:0:1} =~ [[:upper:]] ]] ; then
+				COMPREPLY=( $(compgen -W "$TYPES" -- ${cur^^}) )
+			else
+				COMPREPLY=( $(compgen -W "${TYPES,,}" -- ${cur,,}) )
+			fi
+			return
+			;;
+		--format|-f)
+			local SHORT_FORMATS="CD CDR DAT"
+			local formats
+			while read -r ; do
+				[[ "$REPLY" = "Recognised sample formats"* ]] || continue
+				formats="${REPLY#Recognised sample formats are: }"
+			done <<< $("$1" --help 2>/dev/null)
+			if [[ "$cur" && ${cur:0:1} =~ [[:upper:]] ]] ; then
+				COMPREPLY=( $(compgen -W "$SHORT_FORMATS $formats" -- ${cur^^}) )
+			else
+				COMPREPLY=( $(compgen -W "${SHORT_FORMATS,,} ${formats,,}" -- ${cur,,}) )
+			fi
+			return
+			;;
+
+		--vumeter|-V) #=TYPE      enable VU meter (TYPE: mono or stereo)
+			COMPREPLY=( $(compgen -W "mono stereo" -- $cur) )
+			return
+			;;
+		--*)
+			[[ ${COMP_WORDS[COMP_CWORD]} = = ]] && return
+			;;
+	esac
+
+	if [[ "$cur" = -* ]] ; then
+		local options="$(_parse_help $1)"
+		options="${options//$'\n'-f/}"
+		COMPREPLY=( $(compgen -W "$options" -- $cur) )
+		[[ $COMPREPLY == *= ]] && compopt -o nospace
+	else
+		for ext in $TYPES PCM; do
+			_filedir $ext
+		done
+	fi
+}
+
+_axfer_list() {
+	if (( COMP_CWORD == 2 )) ; then
+		COMPREPLY=( $(compgen -W "capture playback" -- $cur) )
+		return
+	elif (( COMP_CWORD == 3 )) ; then
+		case "$prev" in
+			capture|playback)
+				COMPREPLY=( $(compgen -W "device pcm" -- $cur) )
+				;;
+		esac		
+	fi
+}
+
+_axfer_transfer() {
+	if (( COMP_CWORD == 2 )) ; then
+		COMPREPLY=( $(compgen -W "capture playback" -- $cur) )
+		return
+	fi
+	case "$prev" in
+		-h|--help)
+			return
+			;;
+		-v|--verbose)
+			return
+			;;
+		-d|--duration)
+			return
+			;;
+		-s|--samples)
+			return
+			;;
+		-f|--format)
+			return
+			;;
+		-c|--channels)
+			return
+			;;
+		-r|--rate)
+			return
+			;;
+		-t|--file-type)
+			local TYPES=" au AU raw RAW sparc SPARC voc VOC wav WAV"
+			if [[ "$cur" && ${cur:0:1} =~ [[:upper:]] ]] ; then
+				COMPREPLY=( $(compgen -W "$TYPES" -- ${cur^^}) )
+			else
+				COMPREPLY=( $(compgen -W "${TYPES,,}" -- ${cur,,}) )
+			fi
+			return
+			;;
+		--xfer-type)
+			COMPREPLY=( $(compgen -W "libasound libffado" -- $cur) )
+			return
+			;;
+	esac
+
+	local commonopt="--help --verbose --quiet --duration= --samples= --format= --channels= --rate= --file-type= --separate-channels --dump-hw-params --xfer-type="
+
+	local backend
+	_axfer_get_backend
+
+	[[ "$backend" == libasound ]] || return
+
+	local asoundopt="--device= --nonblock --mmap --period-time= --period-size= --buffer-time= --buffer-size=  --waiter-type=  --sched-model= --avail-min= --start-delay= --stop-delay= --disable-resample --disable-channels --disable-format --disable-softvol --fatal-errors --test-nowait"
+
+	local longopt="$commonopt $asoundopt"
+
+	case "$prev" in
+		-D|--device)
+			local IFS=$'\n'	
+
+			[[ "$cur" =~ [\'\"] ]] && return
+
+			COMPREPLY=( $(_axfer_get_pcms "$1" "$cur" ) )
+
+			# ALSA pcm names can contain '=' and ':', both of which cause
+			# problems for bash completion if it considers them to be word
+			# terminators. So we adjust the list of candidate matches to allow
+			# for this.
+		    if [[ "$cur" == *=* && "$COMP_WORDBREAKS" == *=* ]]; then
+			# Remove equal-word prefix from COMPREPLY
+				local equal_prefix=${cur%"${cur##*=}"}
+				local i=${#COMPREPLY[*]}
+				while [[ $((--i)) -ge 0 ]]; do
+				    COMPREPLY[$i]=${COMPREPLY[$i]#"$equal_prefix"}
+				done
+			fi
+			__ltrim_colon_completions "$cur"
+			return
+			return
+			;;
+		-F|--period-time)
+			return
+			;;
+		-F|--period-size)
+			return
+			;;
+		-B|--buffer-time)
+			return
+			;;
+		--buffer-size)
+			return
+			;;
+		--waiter-type)
+			return
+			;;
+		--sched-model)
+			return
+			;;
+		-A|--avail-min)
+			return
+			;;
+		-R|--start-delay)
+			return
+			;;
+		-T|--stop-delay)
+			return
+			;;
+		--*)
+			[[ ${COMP_WORDS[COMP_CWORD]} = = ]] && return
+			;;
+	esac
+
+	COMPREPLY=( $(compgen -W "$longopt" -- $cur) )
+	[[ $COMPREPLY == *= ]] && compopt -o nospace
+}
+
+_axfer() {
+	local cur prev words cword split
+
+	_init_completion -s -n : || return
+
+	local subcommand
+	(( COMP_CWORD >= 1 )) && subcommand="${COMP_WORDS[1]}"
+
+	case "$subcommand" in
+		help)
+			return
+			;;
+		list)
+			_axfer_list
+			return 
+			;;
+		transfer)
+			_axfer_transfer "$1" "$cur"
+			return
+			;;
+		version)
+			return
+			;;
+		*)
+			(( COMP_CWORD == 1 )) && COMPREPLY=( $(compgen -W "help list transfer version" -- $cur) )
+			return
+			;;
+	esac
+
+}
+
+complete -F _alsaloop alsaloop
+complete -F _alsamixer alsamixer
+complete -F _amidi amidi
+complete -F _amixer amixer
+complete -F _aplay aplay
+complete -F _aplay arecord
+complete -F _axfer axfer
+
+# ex: filetype=sh
