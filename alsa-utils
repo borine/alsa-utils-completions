@@ -11,7 +11,7 @@ _alsautils_complete_cards() {
 		[[ -n "$name" ]] || continue
 		names+=( "${name// }" )
 		ids+=( "$id" )
-	done <<< $(cat /proc/asound/cards)
+	done < /proc/asound/cards
 	COMPREPLY=( $(compgen -W "${ids[@]} ${names[@]}" -- $cur) )
 }
 
