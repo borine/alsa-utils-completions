@@ -40,6 +40,31 @@ _alsautils_complete_pcms() {
 	__ltrim_colon_completions "$cur"
 }
 
+_alsautils_complete_ctls() {
+	local IFS=$'\n'
+	local lcur="${cur//\\/\\\\}"
+	local ctls
+	while read -r; do
+		[[ "$REPLY" == "$lcur"* ]] || continue
+		ctls="$ctls$IFS$REPLY"
+	done <<< $(alsa-list-ctls 2>/dev/null)
+
+	COMPREPLY=( $(compgen -W "default $ctls" -- $lcur) )
+	# ALSA pcm names can contain '=' and ':', both of which cause
+	# problems for bash completion if it considers them to be word
+	# terminators. So we adjust the list of candidate matches to allow
+	# for this.
+	if [[ "$cur" == *=* && "$COMP_WORDBREAKS" == *=* ]]; then
+		# Remove equal-word prefix from COMPREPLY items
+		local equal_prefix=${cur%"${cur##*=}"}
+		local i=${#COMPREPLY[*]}
+		while [[ $((--i)) -ge 0 ]]; do
+			COMPREPLY[$i]=${COMPREPLY[$i]#"$equal_prefix"}
+		done
+	fi
+	__ltrim_colon_completions "$cur"
+}
+
 # helper function - find target card and/or device.
 _amixer_get_target() {
 	target=""
@@ -183,12 +208,12 @@ _alsaloop() {
 			;;
 		-X|--pctl)
 			_have alsa-list-ctls || return
-			COMPREPLY=( $(compgen -W "default $(alsa-list-ctls)" -- $cur) )
+			_alsautils_complete_ctls
 			return
 			;;
 		-Y|--cctl)
 			_have alsa-list-ctls || return
-			COMPREPLY=( $(compgen -W "default $(alsa-list-ctls)" -- $cur) )
+			_alsautils_complete_ctls
 			return
 			;;
 		-l|--latency)
@@ -333,7 +358,7 @@ _amixer() {
 		-D|--device)
 			(( commandword == 0 )) || return
 			_have alsa-list-ctls || return
-			COMPREPLY=( $(compgen -W "default $(alsa-list-ctls)" -- $cur) )
+			_alsautils_complete_ctls
 			return
 			;;
 		-a|--abstract)
@@ -393,7 +418,7 @@ _alsamixer() {
 			;;
 		-D|--device)
 			_have alsa-list-ctls || return
-			COMPREPLY=( $(compgen -W "default $(alsa-list-ctls)" -- $cur) )
+			_alsautils_complete_ctls
 			return
 			;;
 		-V|--view)
