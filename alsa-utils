@@ -657,6 +657,14 @@ _axfer() {
 
 }
 
+_alsa_list_ctls() {
+	_have alsa-list-ctls || return
+	local cur prev words cword split
+	_init_completion -s -n : || return
+
+	COMPREPLY=( $(compgen -W "$(_parse_help alsa-list-ctls)" -- $cur) )
+}
+
 complete -F _alsaloop alsaloop
 complete -F _alsamixer alsamixer
 complete -F _amidi amidi
@@ -664,5 +672,5 @@ complete -F _amixer amixer
 complete -F _aplay aplay
 complete -F _aplay arecord
 complete -F _axfer axfer
-
+complete -F _alsa_list_ctls alsa-list-ctls
 # ex: filetype=sh
