@@ -33,6 +33,7 @@ aliases = [
     'aplay',
     'arecord',
     'axfer',
+	'alsa-list-ctls',
 ]
 
 install_data('alsa-utils', install_dir: completionsdir)
