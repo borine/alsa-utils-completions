@@ -1,6 +1,6 @@
 
 _alsautils_complete_cards() {
-	local id name
+	local id name list
 	declare -a ids names
 	while read -r; do
 		id="${REPLY:0:2}"
@@ -12,7 +12,8 @@ _alsautils_complete_cards() {
 		names+=( "${name// }" )
 		ids+=( "$id" )
 	done < /proc/asound/cards
-	COMPREPLY=( $(compgen -W "${ids[@]} ${names[@]}" -- $cur) )
+	list="${ids[@]} ${names[@]}"
+	COMPREPLY=( $(compgen -W "$list" -- $cur) )
 }
 
 _alsautils_complete_pcms() {
