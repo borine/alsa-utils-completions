@@ -847,16 +847,17 @@ _speaker_test() {
 
 _iecset() {
 	local cur prev words cword split
-	local commands="audio category copyright emphasis lock original professional rate sbits wordlength"
-	local have_command=
-	local word
+	local commands="audio category copyright emphasis lock original professional rate sbits wordlength "
+	local have_command= no_commands=
+	local i
 	_init_completion -s -n : || return
 
 	for word in "${COMP_WORDS[@]}" ; do
-		if [[ "$commands" == *"$word"* ]] ; then
+		if [[ -n "$word" && "$commands" == *"$word "* ]] ; then
 			have_command=1
 			break
 		fi
+		[[ "$word" == "-i" ]] && no_commands=1
 	done
 
 	if [[ -z "$have_command" ]] ; then
@@ -903,13 +904,13 @@ _iecset() {
 			;;
 		esac
 
-		case "$cur" in
-		-*)
+		if [[ "$no_commands" || "$cur" == -* ]] ; then
 			COMPREPLY=( $(compgen -W "-h $(_parse_help $1)" -- $cur) )
 			return
-			;;
-		esac
+		fi
 	fi
+
+	[[ "$no_commands" ]] && return;
 
 	case "$prev" in
 	professional|audio|lock|copyright|original)

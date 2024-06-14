@@ -48,7 +48,7 @@ static void usage(const char *name) {
 	       "  -m, --mixer      list configured mixers\n"
 	       "  -p, --pcm        list configured pcms\n"
 	       "  -r, --rawmidi    list configured rawmidi devices\n"
-	       "  -s, --seq        list configured pcms\n");
+	       "  -s, --seq        list configured sequencers\n");
 }
 
 struct hint_index {

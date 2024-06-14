@@ -1,4 +1,4 @@
-project('alsa-utils-completions', 'c',  version: '0.0.2', license: 'Unlicense')
+project('alsa-utils-completions', 'c',  version: '0.0.3', license: 'Unlicense')
 
 prefix = get_option('prefix')
 assert(prefix.startswith('/'), 'Prefix is not absolute: "@0@"'.format(prefix))
@@ -40,6 +40,7 @@ utils_aliases = [
     'axfer',
 	'speaker-test',
 	'alsa-list',
+	'iecset',
 ]
 
 install_data('alsa-utils', install_dir: completionsdir)

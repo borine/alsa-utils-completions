@@ -4,6 +4,24 @@ bash completion scripts for a selection of tools from the alsa-utils repository 
 
 Includes a trivial executable `alsa-list` that lists various device names from the ALSA configuration and also card names.
 
+The ALSA utilities for which completions are currently included is:
+```
+aconnect
+alsactl
+alsaloop
+alsamixer
+amidi
+amixer
+aplay
+aplaymidi
+arecord
+aseqdump
+aseqnet
+axfer
+iecset
+speaker-test
+```
+
 ## Installation
 
 ```shell
