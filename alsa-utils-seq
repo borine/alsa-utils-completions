@@ -1,0 +1,79 @@
+
+_aconnect() {
+	local cur prev words cword split
+	_init_completion -s -n : || return
+	case "$prev" in
+	-r|--real|-t|--tick)
+		return
+		;;
+	esac
+	COMPREPLY=( $(compgen -W "$(_parse_help $1)" -- $cur) )
+}
+
+_aplaymidi() {
+	local cur prev words cword split
+	_init_completion -s -n : || return
+	case "$prev" in
+	-p|--port|-d|--delay)
+		return
+		;;
+	-u|--ump)
+		COMPREPLY=( $(compgen -W "0 1 2" -- $cur) )
+		return
+		;;
+	esac
+	case "$cur" in
+	-*)
+		COMPREPLY=( $(compgen -W "$(_parse_help $1)" -- $cur) )
+		[[ $COMPREPLY == *= ]] && compopt -o nospace
+		return
+		;;
+	esac
+	_filedir
+}
+
+_aseqdump() {
+	local cur prev words cword split
+	_init_completion -s -n : || return
+	case "$prev" in
+	-p|--port)
+		return
+		;;
+	-u|--ump)
+		COMPREPLY=( $(compgen -W "0 1 2" -- $cur) )
+		return
+		;;
+	esac
+	COMPREPLY=( $(compgen -W "$(_parse_help $1)" -- $cur) )
+	[[ $COMPREPLY == *= ]] && compopt -o nospace
+}
+
+_aseqnet() {
+	local cur prev words cword split
+	_init_completion -s -n : || return
+	case "$prev" in
+	-p|--port|-s|--source|-d|--dest|-n|--name)
+		return
+		;;
+	esac
+	case "$cur" in
+	-*)
+		COMPREPLY=( $(compgen -W "$(_parse_help $1)" -- $cur) )
+		[[ $COMPREPLY == *= ]] && compopt -o nospace
+		return
+		;;
+	esac
+	case "${COMP_WORDS[@]}" in
+	*-6*|*--ipv6*)
+		_known_hosts_real -6 "$cur"
+		return
+		;;
+	esac
+	_known_hosts_real -4 "$cur"
+}
+
+complete -F _aconnect aconnect
+complete -F _aplaymidi aplaymidi
+complete -F _aseqdump aseqdump
+complete -F _aseqnet aseqnet
+# ex: filetype=sh

@@ -1,7 +1,7 @@
 
 _alsautils_complete_cards() {
-	local id name list
-	declare -a ids names
+	local id name
+	declare -a ids names list
 	while read -r; do
 		id="${REPLY:0:2}"
 		id="${id// /}"
@@ -12,58 +12,97 @@ _alsautils_complete_cards() {
 		names+=( "${name// }" )
 		ids+=( "$id" )
 	done < /proc/asound/cards
-	list="${ids[@]} ${names[@]}"
+	list="${ids[@]} ${names[@]}" 
 	COMPREPLY=( $(compgen -W "$list" -- $cur) )
 }
 
 _alsautils_complete_pcms() {
+	_have aplay || return
 	local IFS=$'\n'
 	local lcur="${cur//\\/\\\\}"
 	local pcms
+	local stream="-P"
+	[[ "$1" == "-C" ]] && stream="-C"
 	while read -r; do
 		[[ "$REPLY" == " "* ]] && continue
 		[[ "$REPLY" == "$lcur"* ]] || continue
 		pcms="$pcms$IFS${REPLY// /\\ }"
-	done <<< $(aplay -L 2>/dev/null)
+	done <<< $(aplay "$stream" -L 2>/dev/null)
 	COMPREPLY=( $(compgen -W "$pcms" -- $lcur) )
 	# ALSA pcm names can contain '=' and ':', both of which cause
 	# problems for bash completion if it considers them to be word
 	# terminators. So we adjust the list of candidate matches to allow
 	# for this.
-	if [[ "$cur" == *=* && "$COMP_WORDBREAKS" == *=* ]]; then
-		# Remove equal-word prefix from COMPREPLY items
-		local equal_prefix=${cur%"${cur##*=}"}
+	local c i=${#cur}
+	while ((i-- > 0)) ; do
+		if [[ "${cur:i:1}" == ":" ]] ; then
+			c=":"
+			break
+		elif [[ "${cur:i:1}" == "=" ]] ; then
+			c="="
+			break
+		fi
+	done
+	if [[ "$c" && "$cur" == *$c* && "$COMP_WORDBREAKS" == *$c* ]]; then
+		# Remove prefix from COMPREPLY items
+		local prefix=${cur%"${cur##*$c}"}
 		local i=${#COMPREPLY[*]}
-		while [[ $((--i)) -ge 0 ]]; do
-			COMPREPLY[$i]=${COMPREPLY[$i]#"$equal_prefix"}
+		while ((i-- > 0)) ; do
+			COMPREPLY[$i]=${COMPREPLY[$i]#"$prefix"}
 		done
 	fi
-	__ltrim_colon_completions "$cur"
+
 }
 
 _alsautils_complete_ctls() {
+	_have alsa-list || return
 	local IFS=$'\n'
 	local lcur="${cur//\\/\\\\}"
 	local ctls
 	while read -r; do
 		[[ "$REPLY" == "$lcur"* ]] || continue
 		ctls="$ctls$IFS$REPLY"
-	done <<< $(alsa-list-ctls 2>/dev/null)
+	done <<< $(alsa-list -m 2>/dev/null)
 
-	COMPREPLY=( $(compgen -W "default $ctls" -- $lcur) )
-	# ALSA pcm names can contain '=' and ':', both of which cause
+	COMPREPLY=( $(compgen -W "$ctls" -- $lcur) )
+	# ALSA ctl names can contain '=' and ':', both of which cause
 	# problems for bash completion if it considers them to be word
 	# terminators. So we adjust the list of candidate matches to allow
 	# for this.
-	if [[ "$cur" == *=* && "$COMP_WORDBREAKS" == *=* ]]; then
-		# Remove equal-word prefix from COMPREPLY items
-		local equal_prefix=${cur%"${cur##*=}"}
+	local c i=${#cur}
+	while ((i-- > 0)) ; do
+		if [[ "${cur:i:1}" == ":" ]] ; then
+			c=":"
+			break
+		elif [[ "${cur:i:1}" == "=" ]] ; then
+			c="="
+			break
+		fi
+	done
+	if [[ "$c" && "$cur" == *$c* && "$COMP_WORDBREAKS" == *$c* ]]; then
+		# Remove prefix from COMPREPLY items
+		local prefix=${cur%"${cur##*$c}"}
 		local i=${#COMPREPLY[*]}
-		while [[ $((--i)) -ge 0 ]]; do
-			COMPREPLY[$i]=${COMPREPLY[$i]#"$equal_prefix"}
+		while ((i-- > 0)) ; do
+			COMPREPLY[$i]=${COMPREPLY[$i]#"$prefix"}
 		done
 	fi
-	__ltrim_colon_completions "$cur"
+}
+
+_alsautils_complete_format() {
+	_have aplay || return
+	local formats
+	local short_formats="cd cdr dat"
+	while read -r ; do
+		[[ "$REPLY" = "Recognised sample formats"* ]] || continue
+		formats="${REPLY#Recognised sample formats are: }"
+	done <<< $(aplay --help 2>/dev/null)
+	[[ "$1" == short ]] && formats+=" $short_formats"
+	if [[ "$cur" && ${cur:0:1} =~ [[:lower:]] ]] ; then
+		COMPREPLY=( $(compgen -W "${formats,,}" -- ${cur,,}) )
+	else
+		COMPREPLY=( $(compgen -W "${formats^^}" -- ${cur^^}) )
+	fi
 }
 
 # helper function - find target card and/or device.
@@ -187,34 +226,126 @@ _axfer_get_pcms() {
 	done <<< $("$1" list "$direction" pcm 2>/dev/null)
 }
 
+_alsactl_get_commands() {
+	local start=0
+	local command
+	local old_extglob=$(shopt -p extglob)
+	shopt -s extglob
+	while read; do
+		if [[ "$REPLY" == "Available commands:" ]] ; then
+			start=1
+			continue
+		fi
+		[[ "$start" == "1" ]] || continue
+		[[ "$REPLY" == "   "* ]] && continue
+		command="${REPLY##+([[:space:]])}"
+		command="${command%% *}"
+		commands+=" $command"
+	done <<< $("$1" --help)
+	$old_extglob
+	echo $commands
+}
+
+# completion function for alsactl
+_alsactl() {
+	local cur prev words cword split
+
+	_init_completion -s -n : || return
+
+	[[ $(_count_args) -gt 1 ]] && return
+
+	if [[ $cur = "-" ]] ; then
+		COMPREPLY=( "--" )
+		compopt -o nospace
+		return
+	fi
+
+	case "$prev" in
+		-f|--file)
+			_filedir
+			return
+			;;
+		-a|--config-dir)
+			_filedir -d
+			return
+			;;
+		-K|--lock-dir)
+			_filedir -d
+			return
+			;;
+		-O|---lock-state-file)
+			_filedir
+			return
+			;;
+		-r|--runstate)
+			_filedir
+			return
+			;;
+		-p|--period)
+			return
+			;;
+		-e|--pid-file)
+			_filedir
+			return
+			;;
+		-E|--env)
+			return
+			;;
+		-i|--initfile)
+			_filedir
+			return
+			;;
+		-n|--nice)
+			return
+			;;
+		--*)
+			[[ ${COMP_WORDS[COMP_CWORD]} = = ]] && return
+			;;
+	esac
+
+	local commands=$(_alsactl_get_commands "$1")
+	if [[ "$commands" == *$cur* ]] ; then
+		COMPREPLY=( $(compgen -W "$commands" -- $cur) )
+		return
+	fi 
+	COMPREPLY=( $(compgen -W "$(_parse_help $1)" -- $cur) )
+	[[ $COMPREPLY == *= ]] && compopt -o nospace
+}
+
 # completion function for alsaloop
 _alsaloop() {
 	local cur prev words cword split
 
 	_init_completion -s -n : || return
 
+	if [[ $cur = "-" ]] ; then
+		COMPREPLY=( "--" )
+		compopt -o nospace
+		return
+	fi
+
 	case "$prev" in
 		-g|--config)
+			_filedir
 			return
 			;;
 		-P|--pdevice)
-			_have aplay || return
-			_alsautils_complete_pcms
+			_alsautils_complete_pcms -P
 			return
 			;;
 		-C|--cdevice)
-			_have aplay || return
-			_alsautils_complete_pcms
+			_alsautils_complete_pcms -C
 			return
 			;;
 		-X|--pctl)
-			_have alsa-list-ctls || return
 			_alsautils_complete_ctls
 			return
 			;;
 		-Y|--cctl)
-			_have alsa-list-ctls || return
 			_alsautils_complete_ctls
+			return
+			;;
+		-x|--prateshift)
 			return
 			;;
 		-l|--latency)
@@ -224,16 +355,7 @@ _alsaloop() {
 			return
 			;;
 		-f|--format)
-			local formats
-			while read -r ; do
-				[[ "$REPLY" = "Recognized sample formats"* ]] || continue
-				formats="${REPLY#Recognized sample formats are: }"
-			done <<< $("$1" --help 2>/dev/null)
-			if [[ "$cur" && ${cur:0:1} =~ [[:upper:]] ]] ; then
-				COMPREPLY=( $(compgen -W "$formats" -- ${cur^^}) )
-			else
-				COMPREPLY=( $(compgen -W "${formats,,}" -- ${cur,,}) )
-			fi
+			_alsautils_complete_format
 			return
 			;;
 		-c|--channels)
@@ -243,7 +365,7 @@ _alsaloop() {
 			return
 			;;
 		-A,--samplerate)
-			COMPREPLY=( $(compgen -W "0 1 2 3 4" -- $cur) )
+			COMPREPLY=( $(compgen -W "sincbest sincmedium sincfastest zerohold linear auto" -- $cur) )
 			return
 			;;
 		-B|--buffer)
@@ -256,7 +378,7 @@ _alsaloop() {
 			return
 			;;
 		-S|--sync)
-			COMPREPLY=( $(compgen -W "0 1 2 3 4 5" -- $cur) )
+			COMPREPLY=( $(compgen -W "none simple captshift playshift samplerate auto" -- $cur) )
 			return
 			;;
 		-a|--slave)
@@ -284,8 +406,7 @@ _alsaloop() {
 			;;
 	esac
 
-	local options="--buffer= --cctl= --cdevice= --channels= --daemonize --effect= --format= --help --latency= --mixer= --nblock --ossmixer= --pctl= --pdevice= --period= --rate= --resample --samplerate --seconds= --slave= --sync= --syslog --thread --tlatency= --verbose --wake --workaround --xrun"
-	COMPREPLY=( $(compgen -W "$options" -- $cur) )
+	COMPREPLY=( $(compgen -W "$(_parse_help $1)" -- $cur) )
 	[[ $COMPREPLY == *= ]] && compopt -o nospace
 }
 
@@ -300,12 +421,18 @@ _amidi() {
 			return
 			;;
 		-s|--send)
+			_filedir .syx
 			return
 			;;
 		-r|--receive)
+			_filedir
 			return
 			;;
 		-S|--send-hex)
+			return
+			;;
+		-T|--timestamp)
+			COMPREPLY=( $(compgen -W "realtime monotonic raw" -- $cur) )
 			return
 			;;
 		-t|--timeout)
@@ -319,9 +446,7 @@ _amidi() {
 			;;
 	esac
 
-	local options="$(_parse_help $1)"
-	options="${options//$'\n'-f/}"
-	COMPREPLY=( $(compgen -W "$options" -- $cur) )
+	COMPREPLY=( $(compgen -W "$(_parse_help $1)" -- $cur) )
 	[[ $COMPREPLY == *= ]] && compopt -o nospace
 }
 
@@ -329,7 +454,7 @@ _amidi() {
 _amixer() {
 	local cur prev words cword split
 	local target
-	local commands="scontrols scontents sset sget controls contents cset cget "
+	local commands="scontrols scontents sset sget controls contents cset cget sevents events "
 	local i
 
 	_init_completion -s -n : || return
@@ -358,7 +483,6 @@ _amixer() {
 			;;
 		-D|--device)
 			(( commandword == 0 )) || return
-			_have alsa-list-ctls || return
 			_alsautils_complete_ctls
 			return
 			;;
@@ -418,7 +542,6 @@ _alsamixer() {
 			return
 			;;
 		-D|--device)
-			_have alsa-list-ctls || return
 			_alsautils_complete_ctls
 			return
 			;;
@@ -430,14 +553,16 @@ _alsamixer() {
 			COMPREPLY=( $(compgen -W "basic none" -- $cur) )
 			return				
 			;;
+		-f|--config)
+			_filedir
+			return
+			;;
 		--*)
 			[[ ${COMP_WORDS[COMP_CWORD]} = = ]] && return
 			;;
 	esac
 
-	local options="$(_parse_help $1)"
-	options="${options//$'\n'-f/}"
-	COMPREPLY=( $(compgen -W "$options" -- $cur) )
+	COMPREPLY=( $(compgen -W "$(_parse_help $1)" -- $cur) )
 	[[ $COMPREPLY == *= ]] && compopt -o nospace
 }
 
@@ -454,7 +579,11 @@ _aplay() {
 
 	case "$prev" in
 		--device|-D)
-			_alsautils_complete_pcms
+			if [[ "$1" == *"aplay" ]] ; then
+				_alsautils_complete_pcms -P
+			else
+				_alsautils_complete_pcms -C
+			fi
 			return
 			;;
 		--file-type|-t)
@@ -466,17 +595,7 @@ _aplay() {
 			return
 			;;
 		--format|-f)
-			local SHORT_FORMATS="CD CDR DAT"
-			local formats
-			while read -r ; do
-				[[ "$REPLY" = "Recognised sample formats"* ]] || continue
-				formats="${REPLY#Recognised sample formats are: }"
-			done <<< $("$1" --help 2>/dev/null)
-			if [[ "$cur" && ${cur:0:1} =~ [[:upper:]] ]] ; then
-				COMPREPLY=( $(compgen -W "$SHORT_FORMATS $formats" -- ${cur^^}) )
-			else
-				COMPREPLY=( $(compgen -W "${SHORT_FORMATS,,} ${formats,,}" -- ${cur,,}) )
-			fi
+			_alsautils_complete_format short
 			return
 			;;
 
@@ -520,12 +639,6 @@ _axfer_transfer() {
 		return
 	fi
 	case "$prev" in
-		-h|--help)
-			return
-			;;
-		-v|--verbose)
-			return
-			;;
 		-d|--duration)
 			return
 			;;
@@ -533,6 +646,7 @@ _axfer_transfer() {
 			return
 			;;
 		-f|--format)
+			_alsautils_complete_format short
 			return
 			;;
 		-c|--channels)
@@ -550,7 +664,7 @@ _axfer_transfer() {
 			fi
 			return
 			;;
-		--xfer-type)
+		--xfer-backend)
 			COMPREPLY=( $(compgen -W "libasound libffado" -- $cur) )
 			return
 			;;
@@ -579,34 +693,44 @@ _axfer_transfer() {
 			# problems for bash completion if it considers them to be word
 			# terminators. So we adjust the list of candidate matches to allow
 			# for this.
-		    if [[ "$cur" == *=* && "$COMP_WORDBREAKS" == *=* ]]; then
-			# Remove equal-word prefix from COMPREPLY
-				local equal_prefix=${cur%"${cur##*=}"}
+			local c i=${#cur}
+			while ((i-- > 0)) ; do
+				if [[ "${cur:i:1}" == ":" ]] ; then
+					c=":"
+					break
+				elif [[ "${cur:i:1}" == "=" ]] ; then
+					c="="
+					break
+				fi
+			done
+			if [[ "$c" && "$cur" == *$c* && "$COMP_WORDBREAKS" == *$c* ]]; then
+				# Remove prefix from COMPREPLY items
+				local prefix=${cur%"${cur##*$c}"}
 				local i=${#COMPREPLY[*]}
-				while [[ $((--i)) -ge 0 ]]; do
-				    COMPREPLY[$i]=${COMPREPLY[$i]#"$equal_prefix"}
+				while ((i-- > 0)) ; do
+					COMPREPLY[$i]=${COMPREPLY[$i]#"$prefix"}
 				done
 			fi
-			__ltrim_colon_completions "$cur"
-			return
 			return
 			;;
-		-F|--period-time)
+		--period-time)
 			return
 			;;
 		-F|--period-size)
 			return
 			;;
-		-B|--buffer-time)
+		-B|--buffer-size)
 			return
 			;;
-		--buffer-size)
+		--buffer-time)
 			return
 			;;
 		--waiter-type)
+			COMPREPLY=( $(compgen -W "default select poll epoll" -- $cur) )
 			return
 			;;
 		--sched-model)
+			COMPREPLY=( $(compgen -W "irq timer" -- $cur) )
 			return
 			;;
 		-A|--avail-min)
@@ -658,14 +782,167 @@ _axfer() {
 
 }
 
-_alsa_list_ctls() {
-	_have alsa-list-ctls || return
+_speaker_test() {
+	local formats="S8 S16_LE S16_BE FLOAT_LE S24_3LE S24_3BE S24_LE S24_BE S32_LE S32_BE"
 	local cur prev words cword split
 	_init_completion -s -n : || return
 
-	COMPREPLY=( $(compgen -W "$(_parse_help alsa-list-ctls)" -- $cur) )
+	case "$prev" in
+		-D|--device)
+			_alsautils_complete_pcms -P
+			return
+			;;
+		-r|--rate)
+			return
+			;;
+		-c|--channels)
+			return
+			;;
+		-f|--frequency)
+			return
+			;;
+		-F|--format)
+			[[ $cur =~ [[:lower:]] ]] && formats="${formats,,}"
+			COMPREPLY=( $(compgen -W "$formats" -- $cur) )
+			return
+			;;
+		-b|--buffer)
+			return
+			;;
+		-p|--period)
+			return
+			;;
+		-P|--nperiods)
+			return
+			;;
+		-t|--test)
+			COMPREPLY=( $(compgen -W "pink sine st2095 wav" -- $cur) )
+			return
+			;;
+		-l|--nloops)
+			return
+			;;
+		-s|--speaker)
+			return
+			;;
+		-w|--wavfile)
+			_filedir
+			return
+			;;
+		-W|--wavdir)
+			_filedir -d
+			return
+			;;
+		-m|--chmap)
+			return
+			;;
+		-S|--scale)
+			return
+			;;
+	esac
+
+	COMPREPLY=( $(compgen -W "$(_parse_help $1)" -- $cur) )
+	[[ $COMPREPLY == *= ]] && compopt -o nospace
 }
 
+_iecset() {
+	local cur prev words cword split
+	local commands="audio category copyright emphasis lock original professional rate sbits wordlength"
+	local have_command=
+	local word
+	_init_completion -s -n : || return
+
+	for word in "${COMP_WORDS[@]}" ; do
+		if [[ "$commands" == *"$word"* ]] ; then
+			have_command=1
+			break
+		fi
+	done
+
+	if [[ -z "$have_command" ]] ; then
+		case "$prev" in
+		-D)
+			_alsautils_complete_ctls
+			return
+			;;
+		-c)
+			_alsautils_complete_cards
+			return
+			;;
+		-n)
+			_have amixer || return
+			local cword words=() indices i cmd="amixer controls"
+			__reassemble_comp_words_by_ref ":" words cword
+			for i in "${!words[@]}" ; do
+				if [[ ${words[$i]} == "-c" ]] ; then
+					(( i++ ))
+					cmd="amixer -c ${words[$i]} controls"
+					break
+				elif [[ ${words[$i]} == "-c"* ]] ; then
+					cmd="amixer -c ${words[$i]#-c} controls"
+					break
+				elif [[ ${words[$i]} == "-D" ]] ; then
+					(( i++ ))
+					cmd="amixer -D ${words[$i]} controls"
+					break
+				elif [[ ${words[$i]} == "-D"* ]] ; then
+					cmd="amixer -D ${words[$i]#-D} controls"
+					break
+				fi
+			done
+			while read -r ; do
+				[[ "$REPLY" == *"IEC958 Playback Default"* ]] || continue
+				if [[ "$REPLY" == *"index="* ]] ; then
+					indices+=" ${REPLY##*=}"
+				else
+					indices+=" 0"
+				fi
+			done <<< $($cmd 2>/dev/null)
+			COMPREPLY=( $(compgen -W "$indices" -- $cur) )
+			return
+			;;
+		esac
+
+		case "$cur" in
+		-*)
+			COMPREPLY=( $(compgen -W "-h $(_parse_help $1)" -- $cur) )
+			return
+			;;
+		esac
+	fi
+
+	case "$prev" in
+	professional|audio|lock|copyright|original)
+		COMPREPLY=( $(compgen -W "off on true false yes no 0 1" -- $cur) )
+		return
+		;;
+	emphasis)
+		COMPREPLY=( $(compgen -W "0 1 2" -- $cur) )
+		return
+		;;
+	sbits)
+		COMPREPLY=( $(compgen -W "2 4 6" -- $cur) )
+		return
+		;;
+	wordlength)
+		COMPREPLY=( $(compgen -W "0 2 4 5 6" -- $cur) )
+		return
+		;;
+	rate|category)
+		return
+		;;
+	esac
+
+	COMPREPLY=( $(compgen -W "$commands" -- $cur) )
+}
+
+_alsa_list() {
+	local cur prev words cword split
+	_init_completion -s -n : || return
+	COMPREPLY=( $(compgen -W "$(_parse_help $1)" -- $cur) )
+}
+
+complete -F _alsactl alsactl
 complete -F _alsaloop alsaloop
 complete -F _alsamixer alsamixer
 complete -F _amidi amidi
@@ -673,5 +950,7 @@ complete -F _amixer amixer
 complete -F _aplay aplay
 complete -F _aplay arecord
 complete -F _axfer axfer
-complete -F _alsa_list_ctls alsa-list-ctls
+complete -F _speaker_test speaker-test
+complete -F _iecset iecset
+complete -F _alsa_list alsa-list
 # ex: filetype=sh
