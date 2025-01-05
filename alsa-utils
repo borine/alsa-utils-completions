@@ -364,7 +364,7 @@ _alsaloop() {
 		-r|--rate)
 			return
 			;;
-		-A,--samplerate)
+		-A|--samplerate)
 			COMPREPLY=( $(compgen -W "sincbest sincmedium sincfastest zerohold linear auto" -- $cur) )
 			return
 			;;
