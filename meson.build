@@ -12,7 +12,7 @@ alsadep = dependency('alsa', required : true)
 bashcompdep = dependency('bash-completion', required : true)
 
 if bashcompdep.found()
-    completionsdir = bashcompdep.get_pkgconfig_variable('completionsdir')
+    completionsdir = bashcompdep.get_variable(pkgconfig : 'completionsdir')
 else
     completionsdir = join_paths(datadir, 'bash-completion', 'completions')
 endif
